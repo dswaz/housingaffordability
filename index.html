@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>US County Housing Affordability Map</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/topojson-client@3"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+            color: #e5e7eb; height: 100vh; overflow: hidden;
+        }
+        .container { display: flex; height: 100vh; }
+        .map-container { flex: 1; position: relative; overflow: hidden; }
+        #map-svg { width: 100%; height: 100%; }
+        .loading { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: #d1d5db; font-size: 18px; }
+        .error { position: absolute; top: 20px; right: 20px; background: rgba(127, 29, 29, 0.15); border: 1px solid rgba(239, 68, 68, 0.5); border-radius: 10px; color: #fecaca; padding: 15px; max-width: 360px; }
+        .error-title { font-weight: 600; margin-bottom: 5px; }
+
+        .legend {
+            position: absolute; top: 20px; left: 20px;
+            background: rgba(17, 24, 39, 0.9); backdrop-filter: blur(8px);
+            border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 12px;
+            padding: 14px; min-width: 520px; max-width: 550px;
+        }
+        .legend-main { display: flex; gap: 20px; align-items: flex-start; }
+        .legend-scale-section { flex: 0 0 200px; padding-right: 20px; border-right: 2px solid rgba(255, 255, 255, 0.15); }
+        .legend-filters-section { flex: 1; padding-left: 5px; }
+        .legend-title { font-weight: 600; font-size: 13px; color: #e5e7eb; margin-bottom: 10px; }
+        .legend-gradient { height: 18px; border-radius: 4px; margin-bottom: 4px; }
+        .legend-labels { display: flex; justify-content: space-between; font-size: 11px; color: #9ca3af; }
+        .legend-nodata { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 12px; color: #cbd5e1; }
+        .nodata-swatch { width: 20px; height: 20px; border-radius: 4px; border: 1px solid rgba(255, 255, 255, 0.12); }
+
+        .filter-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+        .filter-chip { padding: 5px 10px; font-size: 12px; border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 6px; cursor: pointer; transition: all 0.2s; background: #111827; color: #e5e7eb; }
+        .filter-chip.active { background: #2563eb; color: #fff; }
+
+        .sidebar { width: 400px; border-left: 1px solid #374151;
+            background: linear-gradient(180deg, rgba(8, 12, 20, 0.9), rgba(8, 12, 20, 0.6));
+            display: flex; flex-direction: column; overflow-y: auto; }
+        .sidebar-header { padding: 18px; border-bottom: 1px solid #1f2937; }
+        .sidebar-title { font-size: 20px; font-weight: bold; color: #e5e7eb; }
+        .sidebar-content { flex: 1; padding: 16px 18px; }
+        .placeholder { font-size: 14px; color: #9ca3af; }
+
+        .county-card { background: linear-gradient(180deg, rgba(23, 31, 51, 0.8), rgba(23, 31, 51, 0.35));
+            border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 12px; padding: 16px; }
+        .county-name { font-size: 18px; font-weight: 600; color: #e5e7eb; }
+        .county-period { font-size: 11px; color: #9ca3af; margin-top: 4px; }
+        .stats-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-top: 16px; }
+        .stat { background: rgba(255, 255, 255, 0.04); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 10px; padding: 12px; }
+        .stat.prominent { background: linear-gradient(180deg, rgba(37, 99, 235, 0.25), rgba(37, 99, 235, 0.05)); }
+        .stat-label { font-size: 11px; color: #93a1b5; margin-bottom: 4px; }
+        .stat-value { font-size: 16px; font-weight: 600; color: #e5e7eb; }
+
+        .toggle-buttons { display: flex; padding: 4px; background: #0b1220; border-radius: 8px; gap: 4px; margin-top: 10px; }
+        .toggle-btn { flex: 1; padding: 8px 12px; font-size: 14px; border: none; border-radius: 6px; cursor: pointer; transition: all 0.2s; background: transparent; color: #cbd5e1; }
+        .toggle-btn.active { background: #2563eb; color: #fff; }
+
+        .explainer { margin-top: 24px; background: rgba(255, 255, 255, 0.04); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 12px; padding: 16px; }
+        .explainer-title { font-size: 14px; font-weight: 600; color: #cbd5e1; margin-bottom: 8px; }
+        .explainer-text { font-size: 13px; color: #9ca3af; line-height: 1.6; }
+
+        .data-sources { margin-top: 12px; padding: 12px; background: rgba(255, 255, 255, 0.04); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 10px; }
+        .data-sources-title { font-size: 12px; font-weight: 600; color: #cbd5e1; margin-bottom: 8px; }
+        .data-sources ul { list-style: none; font-size: 13px; line-height: 1.6; }
+        .data-sources a { color: #7dd3fc; text-decoration: underline; }
+        .data-sources span { color: #9ca3af; }
+
+        @media (max-width: 1024px) { .sidebar { display: none; } }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="map-container">
+            <div id="loading" class="loading">Loading…</div>
+            <div id="error" class="error" style="display: none;">
+                <div class="error-title">Error</div>
+                <div id="error-message"></div>
+            </div>
+
+            <!-- Legend (no down-payment chips here anymore) -->
+            <div class="legend">
+                <div class="legend-main">
+                    <div class="legend-scale-section">
+                        <div class="legend-title">Affordability (%)</div>
+                        <div class="legend-gradient" id="legend-gradient"></div>
+                        <div class="legend-labels">
+                            <span>0</span><span>75</span><span>150</span>
+                        </div>
+                        <div class="legend-nodata">
+                            <svg width="20" height="20" class="nodata-swatch">
+                                <defs>
+                                    <pattern id="legend-hatch" patternUnits="userSpaceOnUse" width="6" height="6" patternTransform="rotate(45)">
+                                        <rect width="2" height="6" fill="#2f2f2f"></rect>
+                                    </pattern>
+                                </defs>
+                                <rect width="20" height="20" fill="url(#legend-hatch)" stroke="rgba(255,255,255,0.12)" stroke-width="1"></rect>
+                            </svg>
+                            <span>No data</span>
+                        </div>
+                    </div>
+                    
+                    <div class="legend-filters-section">
+                        <div class="filter-chips" style="margin-bottom:10px;">
+                            <button class="filter-chip active" data-filter="all">All</button>
+                            <button class="filter-chip" data-filter="ge100">≥100%</button>
+                            <button class="filter-chip" data-filter="75_99">75–99%</button>
+                            <button class="filter-chip" data-filter="50_74">50–74%</button>
+                            <button class="filter-chip" data-filter="25_49">25–49%</button>
+                            <button class="filter-chip" data-filter="lt25">&lt;25%</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <svg id="map-svg"></svg>
+        </div>
+
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <div class="sidebar-title">US County Housing Affordability</div>
+            </div>
+
+            <div class="sidebar-content" id="sidebar-content">
+                <div class="placeholder">Click a county to view details.</div>
+            </div>
+            
+            <div class="data-sources" style="margin-top: auto; border-top: 1px solid #1f2937;">
+                <div class="data-sources-title">Global data sources</div>
+                <ul>
+                    <li>
+                        <span>Median Household Income:</span>
+                        <a href="https://api.census.gov/data/2023/acs/acs5/subject.html#S1901" target="_blank" rel="noreferrer">
+                            Census API docs (2023 5-year)
+                        </a>
+                    </li>
+                    <li>
+                        <span>Redfin County Monthly Trends:</span>
+                        <a href="https://redfin-public-data.s3-us-west-2.amazonaws.com/redfin_market_trends/region_type=county/monthly_market_trends.csv" target="_blank" rel="noreferrer">
+                            monthly_market_trends.csv (latest per county) - 3 month avg
+                        </a>
+                    </li>
+                </ul>
+            </div>
+        </aside>
+    </div>
+
+    <script>
+        // Configuration
+        const TOPOJSON_URL = 'https://cdn.jsdelivr.net/npm/us-atlas@3/counties-10m.json';
+        const DATA_URL = 'affordability_real.json';
+
+        // State
+        let topology = null;
+        let affordabilityData = null;
+        let filter = 'all';
+        let selectedCounty = null;
+        let selectedDownKey = 'dp10'; // default 10%
+
+        // Scales/format
+        const colorScale = d3.scaleSequential(d3.interpolateBlues).domain([0, 150]);
+        const fmt$ = (n) => (n == null || !isFinite(n) ? 'No data' : '$' + Math.round(+n).toLocaleString());
+        const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+        // Fallback PI-only compute if a scenario is absent
+        function monthlyPayment(loanAmt, rateAnnual = 0.06, years = 30) {
+            if (loanAmt == null || !isFinite(loanAmt)) return null;
+            const r = rateAnnual / 12, n = years * 12;
+            const ann = (r * Math.pow(1 + r, n)) / (Math.pow(1 + r, n) - 1);
+            return loanAmt * ann;
+        }
+        function fallbackScenario(rec, downPct = 0.10, rateAnnual = 0.06, dti = 0.30) {
+            if (!rec?.price || !rec?.income) return null;
+            const loan = rec.price * (1 - downPct);
+            const m = monthlyPayment(loan, rateAnnual, 30);
+            if (m == null) return null;
+            const req = (m / dti) * 12;
+            const target = (rec.income / 12) * dti;
+            const r = rateAnnual / 12, n = 360;
+            const maxLoan = target * (1 - Math.pow(1 + r, -n)) / r;
+            const maxPrice = maxLoan / (1 - downPct);
+            const affordability = 100 * (maxPrice / rec.price);
+            const cashToClose = (downPct * rec.price) + (0.03 * rec.price);
+            return {
+                affordability: Math.round(affordability),
+                maxAffordable: Math.round(maxPrice),
+                requiredIncome: Math.round(req),
+                downPayment: Math.round(rec.price * downPct),
+                cashToClose: Math.round(cashToClose),
+                downPct
+            };
+        }
+        function scenarioFor(rec, key) {
+            const s = rec?.scenarios?.[key];
+            if (s) return s;
+            const pct = key === 'dp15' ? 0.15 : key === 'dp20' ? 0.20 : 0.10;
+            return fallbackScenario(rec, pct);
+        }
+        function currentAffPct(rec) {
+            const s = scenarioFor(rec, selectedDownKey);
+            return s ? (s.affordability ?? null) : null;
+        }
+
+        // Legend gradient init
+        function initLegendGradient() {
+            const gradient = document.getElementById('legend-gradient');
+            gradient.style.background = `linear-gradient(to right, ${colorScale(0)}, ${colorScale(150)})`;
+        }
+
+        // Data
+        async function loadData() {
+            try {
+                document.getElementById('loading').style.display = 'block';
+                document.getElementById('error').style.display = 'none';
+
+                const [topoData, affData] = await Promise.all([
+                    d3.json(TOPOJSON_URL),
+                    d3.json(DATA_URL)
+                ]);
+
+                topology = topoData;
+                affordabilityData = affData;
+                
+                document.getElementById('loading').style.display = 'none';
+                renderMap();
+            } catch (e) {
+                console.error(e);
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('error').style.display = 'block';
+                document.getElementById('error-message').textContent = String(e);
+            }
+        }
+
+        // Map
+        function renderMap() {
+            if (!topology || !affordabilityData) return;
+
+            const svg = d3.select('#map-svg');
+            const width = svg.node().clientWidth || 1200;
+            const height = svg.node().clientHeight || 800;
+
+            svg.selectAll('*').remove();
+
+            const defs = svg.append('defs');
+            const hatch = defs.append('pattern')
+                .attr('id', 'nodata-pattern')
+                .attr('patternUnits', 'userSpaceOnUse')
+                .attr('width', 6)
+                .attr('height', 6)
+                .attr('patternTransform', 'rotate(45)');
+            hatch.append('rect').attr('width', 2).attr('height', 6).attr('fill', '#2f2f2f');
+
+            const g = svg.append('g');
+
+            const counties = topojson.feature(topology, topology.objects.counties);
+            const statesMesh = topojson.mesh(topology, topology.objects.states, (a, b) => a !== b);
+            
+            const projection = d3.geoAlbersUsa();
+            projection.fitSize([width, height], counties);
+            const path = d3.geoPath(projection);
+
+            const zoom = d3.zoom().scaleExtent([0.85, 9]).on('zoom', (event) => {
+                g.attr('transform', event.transform);
+            });
+            svg.call(zoom);
+            svg.call(zoom.transform, d3.zoomIdentity.scale(0.85).translate(width * 0.09, height * 0.09));
+
+            // Tooltip
+            const tooltip = d3.select('body')
+                .append('div')
+                .attr('class', 'map-tooltip')
+                .style('position', 'absolute')
+                .style('display', 'none')
+                .style('pointer-events', 'none')
+                .style('background', 'rgba(17,24,39,0.96)')
+                .style('border', '1px solid rgba(255,255,255,0.12)')
+                .style('border-radius', '10px')
+                .style('padding', '10px 12px')
+                .style('font-size', '12px')
+                .style('color', '#e5e7eb')
+                .style('box-shadow', '0 8px 24px rgba(0,0,0,0.35)')
+                .style('z-index', '1000');
+
+            g.append('g')
+                .selectAll('path')
+                .data(counties.features)
+                .join('path')
+                .attr('d', path)
+                .attr('fill', d => {
+                    const rec = affordabilityData?.[d.id];
+                    const pct = rec ? currentAffPct(rec) : null;
+                    if (pct == null) return 'url(#nodata-pattern)';
+                    return colorScale(clamp(pct, 0, 150));
+                })
+                .attr('opacity', d => {
+                    const rec = affordabilityData?.[d.id];
+                    const pct = rec ? currentAffPct(rec) : null;
+                    return showByFilter(pct) ? 0.98 : 0.08;
+                })
+                .attr('stroke', '#1f2937')
+                .attr('stroke-width', 0.25)
+                .style('cursor', 'pointer')
+                .on('mousemove', function(event, d) {
+                    const rec = affordabilityData?.[d.id];
+                    const name = rec?.name ?? `FIPS ${d.id}`;
+                    const s = rec ? scenarioFor(rec, selectedDownKey) : null;
+                    const pct = rec ? currentAffPct(rec) : null;
+
+                    let html = `<div style="font-weight:600;margin-bottom:4px">${name}</div>`;
+                    html += `<div>Affordability (${labelForDownKey(selectedDownKey)}): <b>${pct == null ? 'No data' : pct + '%'}</b></div>`;
+                    html += `<div>Median income: ${fmt$(rec?.income)}</div>`;
+                    html += `<div>Median price: ${fmt$(rec?.price)}</div>`;
+                    if (rec?.monthsAveraged) {
+                        html += `<div style="font-size:10px;color:#9ca3af;margin-top:2px">(${rec.monthsAveraged}-month avg)</div>`;
+                    }
+                    if (s) html += `<div>Required income: ${fmt$(s.requiredIncome)}</div>`;
+
+                    tooltip.html(html)
+                        .style('display', 'block')
+                        .style('left', (event.pageX + 10) + 'px')
+                        .style('top', (event.pageY - 10) + 'px');
+
+                    d3.select(this).attr('stroke', '#60a5fa').attr('stroke-width', 1.5);
+                })
+                .on('mouseout', function() {
+                    tooltip.style('display', 'none');
+                    d3.select(this).attr('stroke', '#1f2937').attr('stroke-width', 0.25);
+                })
+                .on('click', function(event, d) {
+                    const rec = affordabilityData?.[d.id];
+                    if (rec) {
+                        selectedCounty = { ...rec };
+                        renderSidebar();
+                    }
+                });
+
+            g.append('path')
+                .datum(statesMesh)
+                .attr('d', path)
+                .attr('fill', 'none')
+                .attr('stroke', '#374151')
+                .attr('stroke-width', 1)
+                .attr('pointer-events', 'none');
+        }
+
+        function labelForDownKey(key) {
+            return key === 'dp15' ? '15%' : key === 'dp20' ? '20%' : '10%';
+        }
+
+        function showByFilter(pct) {
+            if (filter === 'all') return true;
+            if (pct == null || !isFinite(pct)) return false;
+            if (filter === 'ge100') return pct >= 100;
+            if (filter === '75_99') return pct >= 75 && pct < 100;
+            if (filter === '50_74') return pct >= 50 && pct < 75;
+            if (filter === '25_49') return pct >= 25 && pct < 50;
+            if (filter === 'lt25') return pct >= 0 && pct < 25;
+            return true;
+        }
+
+        // Sidebar
+        function renderSidebar() {
+            const content = document.getElementById('sidebar-content');
+            if (!selectedCounty) {
+                content.innerHTML = '<div class="placeholder">Click a county to view details.</div>';
+                return;
+            }
+
+            const s = scenarioFor(selectedCounty, selectedDownKey);
+            const pct = currentAffPct(selectedCounty);
+
+            content.innerHTML = `
+                <div class="county-card">
+                    <div class="county-name">${selectedCounty.name}</div>
+                    ${selectedCounty.pricePeriodEnd ? `<div class="county-period">Redfin period: ${selectedCounty.pricePeriodEnd}${selectedCounty.monthsAveraged ? ` (${selectedCounty.monthsAveraged}-month avg)` : ''}</div>` : ''}
+
+                    <div class="stats-grid">
+                        <div class="stat prominent">
+                            <div class="stat-label">Affordability (${labelForDownKey(selectedDownKey)})</div>
+                            <div class="stat-value">${pct == null ? 'No data' : pct + '%'}</div>
+                        </div>
+                        <div class="stat">
+                            <div class="stat-label">Required income</div>
+                            <div class="stat-value">${fmt$(s?.requiredIncome)}</div>
+                        </div>
+                        <div class="stat">
+                            <div class="stat-label">Median income</div>
+                            <div class="stat-value">${fmt$(selectedCounty.income)}</div>
+                        </div>
+                        <div class="stat">
+                            <div class="stat-label">Median price${selectedCounty.monthsAveraged ? ` (${selectedCounty.monthsAveraged}-mo avg)` : ''}</div>
+                            <div class="stat-value">${fmt$(selectedCounty.price)}</div>
+                        </div>
+                        <div class="stat">
+                            <div class="stat-label">Down payment (${labelForDownKey(selectedDownKey)})</div>
+                            <div class="stat-value">${fmt$(s?.downPayment)}</div>
+                        </div>
+                        <div class="stat">
+                            <div class="stat-label">Cash to close (est.)</div>
+                            <div class="stat-value">${fmt$(s?.cashToClose)}</div>
+                        </div>
+                    </div>
+
+                    <!-- NEW: down-payment chips inside the sidebar -->
+                    <div class="toggle-buttons" id="down-chips">
+                        <button class="toggle-btn ${selectedDownKey==='dp10' ? 'active' : ''}" data-down="dp10">10%</button>
+                        <button class="toggle-btn ${selectedDownKey==='dp15' ? 'active' : ''}" data-down="dp15">15%</button>
+                        <button class="toggle-btn ${selectedDownKey==='dp20' ? 'active' : ''}" data-down="dp20">20%</button>
+                    </div>
+                </div>
+
+                <div class="explainer">
+                    <div class="explainer-title">How we calculate</div>
+                    <p class="explainer-text">
+                        <strong>Assumptions:</strong> 30% front-end DTI, 6% fixed rate, 30-year mortgage.
+                        Default view uses <strong>10% down</strong>; use the chips above (10/15/20%) to compare.
+                        “Cash to close” ≈ Down payment + 3% closing costs. (P&I only—no taxes/insurance/HOA.)
+                        <br><br>
+                        <strong>Data:</strong> Redfin 3-month average ((single-family homes + Townhouse only). Income: 2023 Census ACS 5-year.
+                        <br><br>
+                         <strong>Calculation:</strong> Affordability is Median Income ÷ Required Income × 100. Values >100% mean the median household income exceeds what's needed to afford the median home price.
+                    </p><strong>
+                </div>
+            `;
+
+            // Wire the chip events after rendering
+            attachDownChipHandlers();
+        }
+
+        function attachDownChipHandlers() {
+            document.querySelectorAll('#down-chips .toggle-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    selectedDownKey = btn.dataset.down;
+                    renderMap();
+                    renderSidebar();
+                });
+            });
+        }
+
+        // Events (filters)
+        function setupEventListeners() {
+            document.querySelectorAll('[data-filter]').forEach(chip => {
+                chip.addEventListener('click', () => {
+                    filter = chip.dataset.filter;
+                    document.querySelectorAll('[data-filter]').forEach(c => c.classList.remove('active'));
+                    chip.classList.add('active');
+                    renderMap();
+                    renderSidebar();
+                });
+            });
+        }
+
+        // Init
+        initLegendGradient();
+        setupEventListeners();
+        loadData();
+    </script>
+</body>
+</html>
